@@ -1,0 +1,38 @@
+/* Add transitions for color changing elements */
+body,
+.has-background,
+.wp-block-coblocks-pricing-table-item,
+.wp-block-quote.is-style-large,
+.wp-block-pullquote.is-style-solid-color,
+.has-drop-cap:not(:focus)::first-letter,
+.wp-block-coblocks-shape-divider {
+	transition: var(--go-button--transition, background-color 200ms cubic-bezier(0.7, 0, 0.3, 1), box-shadow 200ms cubic-bezier(0.7, 0, 0.3, 1), border-color 200ms cubic-bezier(0.7, 0, 0.3, 1), color 200ms cubic-bezier(0.7, 0, 0.3, 1), fill 200ms cubic-bezier(0.7, 0, 0.3, 1));
+}
+
+.has-footer-background .content-area > *:last-child {
+	transition: margin 300ms cubic-bezier(0.645, 0.045, 0.355, 1);
+}
+
+.site-footer {
+	transition: padding 300ms cubic-bezier(0.645, 0.045, 0.355, 1);
+}
+
+.customize-partial-edit-shortcut button {
+
+	&:hover,
+	&:active,
+	&:focus {
+		border: 2px solid #fff;
+	}
+
+	&:focus {
+		box-shadow: 0 0 0 2px #008ec2;
+	}
+}
+
+.has-footer-1 .site-footer:not(.site-footer--1),
+.has-footer-2 .site-footer:not(.site-footer--2),
+.has-footer-3 .site-footer:not(.site-footer--3),
+.has-footer-4 .site-footer:not(.site-footer--4) {
+	display: none;
+}

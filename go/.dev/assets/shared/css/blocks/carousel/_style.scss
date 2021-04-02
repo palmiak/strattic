@@ -1,0 +1,16 @@
+/*! CoBlocks: Carousel */
+.wp-block-coblocks-gallery-carousel {
+
+	.coblocks-gallery--figure {
+		margin: 0;
+	}
+
+
+	+ .wp-block-coblocks-gallery-stacked {
+		margin-top: 0 !important;
+	}
+}
+
+.wp-block-coblocks-gallery-carousel.alignfull + .wp-block-cover.alignfull {
+	margin-top: calc(var(--go--spacing--vertical--lg) * -1) !important;
+}

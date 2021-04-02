@@ -1,0 +1,730 @@
+workflows:
+  version: 2.1
+  main:
+    jobs:
+      # Support PHP Versions
+      # http://php.net/supported-versions.php
+      - php56-phpcs: # EOL December 31, 2018, latest PHP version supported by Go
+          filters:
+            tags:
+              only: /^(?!canary).*$/
+      - php73-phpcs: # Will be deprecated on 30 Nov 2020
+          filters:
+            tags:
+              only: /^(?!canary).*$/
+      - unit-test-73:
+          filters:
+            tags:
+              only: /^(?!canary).*$/
+      - unit-test-74:
+          filters:
+            tags:
+              only: /^(?!canary).*$/
+      - theme-check:
+          filters:
+            tags:
+              only: /^(?!canary).*$/
+      - a11y-tests:
+          filters:
+            tags:
+              only: /^(?!canary).*$/
+      - i18n:
+          filters:
+            branches:
+              only: master
+
+      - visual-regression-chrome:
+          filters:
+            tags:
+              only: /^(?!canary).*$/
+      # - visual-regression-firefox:
+      #     filters:
+      #       tags:
+      #         only: /^(?!canary).*$/
+
+      - visual-regression-update-snapshots-chrome:
+          filters:
+            branches:
+              only:
+                - actions/visual-regression-update-snapshots
+      - visual-regression-update-snapshots-firefox:
+          filters:
+            branches:
+              only:
+                - actions/visual-regression-update-snapshots
+
+      - canary:
+          requires:
+            - php56-phpcs
+            - php73-phpcs
+            - unit-test-73
+            - unit-test-74
+            - theme-check
+            - a11y-tests
+          filters:
+            branches:
+              only: master
+      - deploy:
+          requires:
+            - php56-phpcs
+            - php73-phpcs
+            - unit-test-73
+            - unit-test-74
+            - theme-check
+            - a11y-tests
+            - visual-regression-chrome
+            # - visual-regression-firefox
+          filters:
+            tags:
+              only: /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))*)?(\+[0-9-]+(\.[0-9]+)*)?/ # Run on semantic version tags only
+            branches:
+              ignore: /.*/
+
+version: 2.1
+
+commands:
+  wait_for_mysql:
+    steps:
+      - run:
+          name: Waiting for MySQL to be ready
+          command: |
+            for i in `seq 1 10`;
+            do
+              nc -z 127.0.0.1 3306 && echo Success && exit 0
+              echo -n .
+              sleep 1
+            done
+            echo Failed waiting for MySQL && exit 1
+
+  install_dependencies:
+    steps:
+      - run:
+          name: "Install Dependencies"
+          command: |
+            sudo chmod -R 777 ../../
+            mkdir -p ../../plugins/coblocks
+            if [ "$CIRCLE_JOB" == "php56-phpcs" ]; then
+              composer require oomphinc/composer-installers-extender ^1.1
+            fi
+            composer install
+
+  install_code_climate_test_reporter:
+    steps:
+      - run:
+          name: Install Code Climate test reporter
+          command: |
+            curl -L https://codeclimate.com/downloads/test-reporter/test-reporter-latest-linux-amd64 > ./cc-test-reporter
+            chmod +x ./cc-test-reporter
+            ./cc-test-reporter before-build
+
+  install_wpcli:
+    steps:
+      - run:
+          name: Install WPCLI
+          command: |
+            curl -O https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+            chmod +x wp-cli.phar
+            sudo mv wp-cli.phar /usr/local/bin/wp
+
+  run_phpunit_single_site_generate_coverage:
+    steps:
+      - run:
+          name: "Run PHPUnit - Single Site - Generate Coverage Reports"
+          command: composer run test -- --coverage-html=/tmp/artifacts/code-coverage/phpunit/html --log-junit=/tmp/artifacts/code-coverage/phpunit/results.xml --coverage-clover=clover.xml
+          working_directory: /tmp/wordpress/wp-content/themes/go
+
+
+jobs:
+  php56-phpcs:
+    docker:
+      - image: circleci/php:5.6
+        auth:
+          username: $DOCKERHUB_USERNAME
+          password: $DOCKERHUB_PASSWORD
+    steps:
+      - checkout
+      - run:
+          name: "Setup Environment Variables"
+          command: |
+            echo "export PATH=$HOME/.composer/vendor/bin:$PATH" >> $BASH_ENV
+            source /home/circleci/.bashrc
+      - install_dependencies
+      - run:
+          name: "Run PHPCS"
+          command: composer lint
+
+  php73-phpcs:
+    docker:
+      - image: circleci/php:7.3.8
+        auth:
+          username: $DOCKERHUB_USERNAME
+          password: $DOCKERHUB_PASSWORD
+    steps:
+      - checkout
+      - run:
+          name: "Setup Environment Variables"
+          command: |
+            echo "export PATH=$HOME/.composer/vendor/bin:$PATH" >> $BASH_ENV
+            source /home/circleci/.bashrc
+      - install_dependencies
+      - run:
+          name: "Run PHPCS"
+          command: composer lint
+
+  unit-test-73:
+    docker:
+      - image: circleci/php:7.3.8-apache-node-browsers
+        auth:
+          username: $DOCKERHUB_USERNAME
+          password: $DOCKERHUB_PASSWORD
+      - image: circleci/mysql:5.7
+        auth:
+          username: $DOCKERHUB_USERNAME
+          password: $DOCKERHUB_PASSWORD
+    steps:
+      - checkout
+      - wait_for_mysql
+      - run:
+          name: Update hosts
+          command: echo 127.0.0.1 go.test | sudo tee -a /etc/hosts
+      - run:
+          name: Update npm
+          command: sudo npm install -g npm@latest
+      - run:
+          name: Install MariaDB
+          command: |
+            sudo apt-get update
+            sudo apt-get install mariadb-client
+      - run:
+          name: Install rsync
+          command: sudo apt install rsync
+      - install_code_climate_test_reporter
+      - install_wpcli
+      - run:
+          name: Install gettext
+          command: sudo apt-get install gettext
+      - run:
+          name: Setup WordPress site
+          command: bash .dev/deploy-scripts/install-wp-tests.sh wordpress_test root '' 127.0.0.1 latest
+      - run:
+          name: Install Composer packages
+          command: composer install
+          working_directory: /tmp/wordpress/wp-content/themes/go
+      - restore_cache:
+          key: dependency-cache-{{ checksum "package.json" }}
+      - run:
+          name: Install node packages
+          command: npm install
+          working_directory: /tmp/wordpress/wp-content/themes/go
+      - save_cache:
+          key: dependency-cache-{{ checksum "package.json" }}
+          paths:
+            - node_modules
+      - run:
+          name: Build the Go Theme
+          command: npm run build
+          working_directory: /tmp/wordpress/wp-content/themes/go
+      - run_phpunit_single_site_generate_coverage
+      - run:
+          name: "Deploy Coverage to Code Climate"
+          command: ./cc-test-reporter after-build -t clover --exit-code $?
+          working_directory: /tmp/wordpress/wp-content/themes/go
+      - store_artifacts:
+          path: /tmp/artifacts/code-coverage/
+          destination: phpunit-coverage
+      - store_test_results:
+          path: /tmp/artifacts/code-coverage/
+
+  unit-test-74:
+    docker:
+      - image: circleci/php:7.4.15-apache-node-browsers
+        auth:
+          username: $DOCKERHUB_USERNAME
+          password: $DOCKERHUB_PASSWORD
+        environment:
+          XDEBUG_MODE=coverage
+      - image: circleci/mysql:5.7
+        auth:
+          username: $DOCKERHUB_USERNAME
+          password: $DOCKERHUB_PASSWORD
+    steps:
+      - checkout
+      - wait_for_mysql
+      - run:
+          name: Update hosts
+          command: echo 127.0.0.1 go.test | sudo tee -a /etc/hosts
+      - run:
+          name: Update npm
+          command: sudo npm install -g npm@latest
+      - run:
+          name: Install MariaDB
+          command: |
+            sudo apt-get update
+            sudo apt-get install mariadb-client
+      - run:
+          name: Install rsync
+          command: sudo apt install rsync
+      - install_code_climate_test_reporter
+      - install_wpcli
+      - run:
+          name: Install gettext
+          command: sudo apt-get install gettext
+      - run:
+          name: Setup WordPress site
+          command: bash .dev/deploy-scripts/install-wp-tests.sh wordpress_test root '' 127.0.0.1 latest
+      - run:
+          name: Install Composer packages
+          command: composer install
+          working_directory: /tmp/wordpress/wp-content/themes/go
+      - restore_cache:
+          key: dependency-cache-{{ checksum "package.json" }}
+      - run:
+          name: Install node packages
+          command: npm install
+          working_directory: /tmp/wordpress/wp-content/themes/go
+      - save_cache:
+          key: dependency-cache-{{ checksum "package.json" }}
+          paths:
+            - node_modules
+      - run:
+          name: Build the Go Theme
+          command: npm run build
+          working_directory: /tmp/wordpress/wp-content/themes/go
+      - run_phpunit_single_site_generate_coverage
+      - run:
+          name: "Deploy Coverage to Code Climate"
+          command: ./cc-test-reporter after-build -t clover --exit-code $?
+          working_directory: /tmp/wordpress/wp-content/themes/go
+      - store_artifacts:
+          path: /tmp/artifacts/code-coverage/
+          destination: phpunit-coverage
+      - store_test_results:
+          path: /tmp/artifacts/code-coverage/
+
+  theme-check:
+    docker:
+      - image: circleci/php:7.3.8-apache-node-browsers
+        auth:
+          username: $DOCKERHUB_USERNAME
+          password: $DOCKERHUB_PASSWORD
+      - image: circleci/mysql:5.7
+        auth:
+          username: $DOCKERHUB_USERNAME
+          password: $DOCKERHUB_PASSWORD
+    steps:
+      - checkout
+      - wait_for_mysql
+      - run:
+          name: Update npm
+          command: sudo npm install -g npm@latest
+      - run:
+          name: Install MariaDB
+          command: |
+            sudo apt-get update
+            sudo apt-get install mariadb-client
+      - run:
+          name: Install rsync
+          command: sudo apt install rsync
+      - run:
+          name: Install gettext
+          command: sudo apt-get install gettext
+      - run:
+          name: Install Grunt.js
+          command: sudo npm install -g grunt-cli
+      - restore_cache:
+          key: dependency-cache-{{ checksum "package.json" }}
+      - run:
+          name: Install node packages
+          command: npm install
+      - save_cache:
+          key: dependency-cache-{{ checksum "package.json" }}
+          paths:
+            - node_modules
+      - install_wpcli
+      - run:
+          name: Build the Go Theme
+          command: npm run build
+      - run:
+          name: Setup WordPress site and install the Theme Check package
+          command: bash .dev/deploy-scripts/install-wp-tests.sh wordpress_test root '' 127.0.0.1 latest
+      - run:
+          name: Run theme check
+          command: wp themecheck --theme=go --no-interactive --path=/tmp/wordpress
+
+  a11y-tests:
+    docker:
+      - image: circleci/php:7.3.8-apache-node-browsers
+        auth:
+          username: $DOCKERHUB_USERNAME
+          password: $DOCKERHUB_PASSWORD
+      - image: circleci/mysql:5.7
+        auth:
+          username: $DOCKERHUB_USERNAME
+          password: $DOCKERHUB_PASSWORD
+    steps:
+      - checkout
+      - wait_for_mysql
+      - run:
+          name: Update hosts
+          command: echo 127.0.0.1 go.test | sudo tee -a /etc/hosts
+      - run:
+          name: Update npm
+          command: sudo npm install -g npm@latest
+      - run:
+          name: Install MariaDB
+          command: |
+            sudo apt-get update
+            sudo apt-get install mariadb-client
+      - run:
+          name: Install rsync
+          command: sudo apt install rsync
+      - run:
+          name: Install gettext
+          command: sudo apt-get install gettext
+      - run:
+          name: Install Grunt.js
+          command: sudo npm install -g grunt-cli
+      - restore_cache:
+          key: dependency-cache-{{ checksum "package.json" }}
+      - run:
+          name: Install node packages
+          command: npm install
+      - save_cache:
+          key: dependency-cache-{{ checksum "package.json" }}
+          paths:
+            - node_modules
+      - install_wpcli
+      - run:
+          name: Build the Go Theme
+          command: npm run build
+      - run:
+          name: Setup WordPress site
+          command: bash .dev/deploy-scripts/install-wp-tests.sh wordpress_test root '' 127.0.0.1 latest
+      - run:
+          name: Run a11y tests
+          command: |
+            RESULTS=$(npm run test-a11y)
+            # rerun tests to display the formatted output
+            npm run test-a11y
+            if [[ $RESULTS != *"All accessibility tests have passed"* ]]; then
+              exit 1
+            fi
+
+  i18n:
+    docker:
+      - image: circleci/php:7.3-node-browsers-legacy
+        auth:
+          username: $DOCKERHUB_USERNAME
+          password: $DOCKERHUB_PASSWORD
+    steps:
+      - add_ssh_keys:
+          fingerprints:
+            - "14:ee:bc:31:0f:50:7e:fe:8b:56:87:f8:56:db:48:5b"
+      - checkout
+      - run:
+          name: Check the commit for [skip i18n]
+          command: |
+            export GIT_COMMIT_DESC=$(git log --format=oneline -n 1 $CIRCLE_SHA1)
+            if [[ $GIT_COMMIT_DESC == *"skip i18n"* ]]; then
+              circleci-agent step halt
+            fi
+      - run:
+          name: Disable xdebug PHP extension
+          command: |
+            sudo rm -f /etc/php/*/mods-available/xdebug.ini
+            sudo rm -f /etc/php/*/mods-enabled/xdebug.ini
+            sudo rm -f /etc/php/*/conf.d/*xdebug.ini
+            sudo rm -f /usr/local/etc/php/conf.d/*xdebug.ini
+      - install_wpcli
+      - restore_cache:
+          keys:
+            - npm-deps-{{ .Branch }}-{{ checksum "package-lock.json" }}
+            - npm-deps-{{ .Branch }}
+      - run:
+          name: Install node dependencies
+          command: |
+            npm install
+      - save_cache:
+          key: npm-deps-{{ .Branch }}-{{ checksum "package-lock.json" }}
+          paths:
+            - /home/circleci/project/node_modules
+            - /home/circleci/.npm
+      - run:
+          name: Generate the translations
+          command: |
+            npm run makepot
+      - run:
+          name: Deploy go.pot/go.json back to GitHub
+          command: |
+            git config --global user.email "plugins@godaddy.com"
+            git config --global user.name "GoDaddy Translator Bot"
+            git checkout HEAD -- composer.lock
+            git checkout HEAD -- package-lock.json
+            git add languages/go.json
+            git add languages/go.pot
+            git status
+            git commit -m "Update go.pot/go.json files [skip i18n]"
+            git reset --hard
+            git pull --rebase
+            git push origin master --quiet
+
+  visual-regression-chrome:
+    docker:
+      - image: circleci/python:latest-node-browsers
+        auth:
+          username: $DOCKERHUB_USERNAME
+          password: $DOCKERHUB_PASSWORD
+    parallelism: 10
+    steps:
+      - checkout
+      - run:
+          name: Update npm
+          command: sudo npm install -g npm@latest
+      - restore_cache:
+          key: dependency-cache--{{ checksum "package.json" }}
+      - run:
+          name: Install node packages
+          command: npm install
+      - save_cache:
+          key: dependency-cache--{{ checksum "package.json" }}
+          paths:
+            - node_modules
+            - ~/.cache
+      - run:
+          name: "Install awscli"
+          command: sudo apt-get install awscli
+      - run:
+          name: "Download base snapshots"
+          command: |
+            if [ "$CIRCLE_BRANCH" == "master" ]; then
+              npm run snapshots:download-all
+            else
+              npm run snapshots:download
+            fi
+      - run:
+          name: "Run end to end tests (Cypress.io)"
+          command: |
+            if [ "$CIRCLE_BRANCH" == "master" ]; then
+              npm run test-vr-all -- --browser chrome --record --parallel --group vr-chrome
+            else
+              npm run test-vr -- --browser chrome --record --parallel --group vr-chrome
+            fi
+
+  visual-regression-firefox:
+    docker:
+      - image: circleci/python:latest-node-browsers
+        auth:
+          username: $DOCKERHUB_USERNAME
+          password: $DOCKERHUB_PASSWORD
+    parallelism: 10
+    steps:
+      - checkout
+      - run:
+          name: Update npm
+          command: sudo npm install -g npm@latest
+      - restore_cache:
+          key: dependency-cache--{{ checksum "package.json" }}
+      - run:
+          name: Install node packages
+          command: npm install
+      - save_cache:
+          key: dependency-cache--{{ checksum "package.json" }}
+          paths:
+            - node_modules
+            - ~/.cache
+      - run:
+          name: "Install awscli"
+          command: sudo apt-get install awscli
+      - run:
+          name: "Download base snapshots"
+          command: |
+            if [ "$CIRCLE_BRANCH" == "master" ]; then
+              npm run snapshots:download-all
+            else
+              npm run snapshots:download
+            fi
+      - run:
+          name: "Run end to end tests (Cypress.io)"
+          command: |
+            if [ "$CIRCLE_BRANCH" == "master" ]; then
+              npm run test-vr-all -- --browser firefox --record --parallel --group vr-firefox
+            else
+              npm run test-vr -- --browser firefox --record --parallel --group vr-firefox
+            fi
+
+  visual-regression-update-snapshots-chrome:
+    docker:
+      - image: circleci/python:latest-node-browsers
+        auth:
+          username: $DOCKERHUB_USERNAME
+          password: $DOCKERHUB_PASSWORD
+    parallelism: 10
+    steps:
+      - checkout
+      - run:
+          name: Update npm
+          command: sudo npm install -g npm@latest
+      - restore_cache:
+          key: dependency-cache--{{ checksum "package.json" }}
+      - run:
+          name: Install node packages
+          command: npm install
+      - save_cache:
+          key: dependency-cache--{{ checksum "package.json" }}
+          paths:
+            - node_modules
+            - ~/.cache
+      - run:
+          name: "Install awscli"
+          command: sudo apt-get install awscli
+      - run:
+          name: "Run end to end tests (Cypress.io)"
+          command: npm run test-vr-all -- --browser chrome --record --parallel --group vr-chrome
+      - run:
+          name: "Update base snapshots"
+          command: |
+            if [ ! -d .dev/tests/cypress/snapshots/visual-regression ] || [ -z "$(ls -A .dev/tests/cypress/snapshots/visual-regression)"]; then
+              echo "No snapshots to upload."
+              circleci-agent step halt
+            fi
+            npm run snapshots:upload-all
+
+  visual-regression-update-snapshots-firefox:
+    docker:
+      - image: circleci/python:latest-node-browsers
+        auth:
+          username: $DOCKERHUB_USERNAME
+          password: $DOCKERHUB_PASSWORD
+    parallelism: 10
+    steps:
+      - checkout
+      - run:
+          name: Update npm
+          command: sudo npm install -g npm@latest
+      - restore_cache:
+          key: dependency-cache--{{ checksum "package.json" }}
+      - run:
+          name: Install node packages
+          command: npm install
+      - save_cache:
+          key: dependency-cache--{{ checksum "package.json" }}
+          paths:
+            - node_modules
+            - ~/.cache
+      - run:
+          name: "Install awscli"
+          command: sudo apt-get install awscli
+      - run:
+          name: "Run end to end tests (Cypress.io)"
+          command: npm run test-vr-all -- --browser firefox --record --parallel --group vr-firefox
+      - run:
+          name: "Update base snapshots"
+          command: |
+            if [ ! -d .dev/tests/cypress/snapshots/visual-regression ] || [ -z "$(ls -A .dev/tests/cypress/snapshots/visual-regression)"]; then
+              echo "No snapshots to upload."
+              circleci-agent step halt
+            fi
+            npm run snapshots:upload-all
+
+  canary:
+    docker:
+      - image: circleci/golang:latest-node-browsers-legacy
+        auth:
+          username: $DOCKERHUB_USERNAME
+          password: $DOCKERHUB_PASSWORD
+    steps:
+      - checkout
+      - run:
+          name: Update npm
+          command: sudo npm install -g npm@latest
+      - run:
+          name: Install Grunt.js
+          command: sudo npm install -g grunt-cli
+      - run:
+          name: Install PHP
+          command: sudo apt-get install php libapache2-mod-php php-mbstring
+      - run:
+          name: Install gettext
+          command: sudo apt-get install gettext
+      - install_wpcli
+      - run:
+          name: Install ghr
+          command: |
+            go get -u github.com/tcnksm/ghr
+      - run:
+          name: Install rsync
+          command: sudo apt install rsync
+      - run:
+          name: Install node packages
+          command: npm install
+      - run:
+          name: Build the Go Theme
+          command: |
+            npm run build
+            mkdir -p go
+            mkdir -p /tmp/artifacts
+            npm run json2po
+            npm run po2mo
+            rsync -av --exclude-from ~/project/.distignore --delete ~/project/. ./go
+            GO_VERSION_LINE=$(awk '/\* Version:/{ print NR; exit }' ./go/style.css)
+            GO_COMMIT_HASH=$(git rev-parse --verify HEAD | head -c 7)
+            sed -i -e "${GO_VERSION_LINE}s/$/-${GO_COMMIT_HASH}/" ./go/style.css
+            zip -r /tmp/artifacts/go-canary.zip ./go
+      - run:
+          name: Create a canary release on GitHub
+          command: ghr -t ${GH_ACCESS_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} -c ${CIRCLE_SHA1} -n "canary" -b "Latest build of the master branch. This bleeding edge version is for testing purposes only and should not be used in production." -delete -prerelease -replace canary /tmp/artifacts/go-canary.zip
+      - deploy:
+          name: Deploy Go canary to the WPNUX site
+          command: |
+            curl https://wpnux.godaddy.com/v2/webhook-install-canary.php \
+            -H 'Content-Type: application/json' \
+            -H "X-Authorization: Bearer ${WPNUX_SITE_X_AUTHORIZATION}" \
+            -d '[ "go" ]'
+
+  deploy:
+    docker:
+      - image: circleci/golang:latest-node-browsers-legacy
+        auth:
+          username: $DOCKERHUB_USERNAME
+          password: $DOCKERHUB_PASSWORD
+    steps:
+      - checkout
+      - run:
+          name: Update npm
+          command: sudo npm install -g npm@latest
+      - run:
+          name: Install Grunt.js
+          command: sudo npm install -g grunt-cli
+      - run:
+          name: Install PHP
+          command: sudo apt-get install php libapache2-mod-php php-mbstring
+      - run:
+          name: Install gettext
+          command: sudo apt-get install gettext
+      - install_wpcli
+      - run:
+          name: Install ghr
+          command: |
+            go get -u github.com/tcnksm/ghr
+      - run:
+          name: Install rsync
+          command: sudo apt install rsync
+      - run:
+          name: Install node packages
+          command: npm install
+      - run:
+          name: Build the Go Theme
+          command: |
+            npm run build
+            mkdir -p go
+            mkdir -p /tmp/artifacts
+            rsync -av --exclude-from ~/project/.distignore --delete ~/project/. ./go
+            rm -rf go/languages
+            zip -r /tmp/artifacts/go.zip ./go
+      - deploy:
+          name: Deploy a new release to GitHub
+          command: |
+            CHANGELOG=$(sed -n -e '/== Changelog ==/,$p' $HOME/project/readme.txt | tail -n +3)
+            ghr -t ${GH_ACCESS_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} -c ${CIRCLE_SHA1} -b "${CHANGELOG}" -delete ${CIRCLE_TAG} /tmp/artifacts
+      - store_artifacts:
+          path: /tmp/artifacts
