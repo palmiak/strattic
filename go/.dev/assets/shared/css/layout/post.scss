@@ -4,11 +4,9 @@
 	& a {
 		color: var(--go-h1--color--text, var(--go-heading--color--text));
 		text-decoration: none;
-		font-weight: bold;
 
 		&:hover {
 			text-decoration: underline;
-			color: red;
 		}
 	}
 }
